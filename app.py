@@ -47,13 +47,23 @@ CONFIRM_MS = 5000
 HTTP_TIMEOUT = 6           # seconds; without it a stalled socket freezes the whole loop
 
 # Runtime settings: config.py defaults, overridden by settings.json (written from the web page).
+LAYOUTS = (2, 4, 8)          # printers per screen: two tall cards, quarters, or 2 x 4 rows
+
+
+def _default_layout():
+    n = len(config.PRINTER_IDS)
+    return getattr(config, "LAYOUT", 2 if n <= 2 else 4 if n <= 4 else 8)
+
+
 S = {"poll": config.POLL_SECONDS, "idle": getattr(config, "IDLE_OFF_MINUTES", 15),
-     "bambuddy": config.BAMBUDDY}
+     "bambuddy": config.BAMBUDDY, "layout": _default_layout()}
 try:
     with open("settings.json") as _f:
         S.update(json.load(_f))
 except (OSError, ValueError):
     pass
+if S["layout"] not in LAYOUTS:
+    S["layout"] = 2
 last_error = ""
 boot_ms = time.ticks_ms()
 DEBUG = getattr(config, "DEBUG", False)
@@ -68,7 +78,7 @@ IN_W = CARD_W - 16                 # inner text width of a card
 BED_Y, BED_H = 196, 30
 BTN_Y, BTN_H = 216, 22             # detail view buttons
 
-data = [None, None]          # latest status per printer
+data = [None] * 8            # latest (slim) status per slot; S["layout"] slots are used
 queue_cache = {}             # printer index -> (ticks, [next jobs])
 confirm = {}                 # printer index -> ticks deadline for the confirm tap
 flash = {}                   # printer index -> (text, colour, ticks until)
@@ -167,8 +177,12 @@ def slim(st):
     return out
 
 
+fetch_ms = 0                 # duration of the last status fetch (shown on the web page)
+
+
 def fetch(pid):
-    global last_error
+    global last_error, fetch_ms
+    t0 = time.ticks_ms()
     try:
         r = requests.get("%s/printers/%d/status" % (S["bambuddy"], pid), timeout=HTTP_TIMEOUT)
         out = slim(r.json()) if r.status_code == 200 else None
@@ -176,6 +190,7 @@ def fetch(pid):
             last_error = "printer %d: HTTP %d" % (pid, r.status_code)
         r.close()
         gc.collect()
+        fetch_ms = time.ticks_diff(time.ticks_ms(), t0)
         return out
     except Exception as e:
         print("fetch", pid, e)
@@ -242,12 +257,55 @@ def next_jobs(pid, model, want=2):
 
 
 # ---------- main view ----------
+# S["layout"] = 2 (two tall cards), 4 (quarters) or 8 (2 columns x 4 rows).
+# Slot i shows printer PRINTER_IDS[i]; slots without an id are drawn as "empty slot".
+
+def pid_of(i):
+    ids = config.PRINTER_IDS
+    return ids[i] if i < len(ids) else None
+
+
+def open_detail(i):
+    global view, last_poll
+    view = i
+    queue_cache.pop(i, None)
+    last_poll = time.ticks_add(time.ticks_ms(), -60_000)   # load queue on next loop pass
+    d.fill(BG)
+    cache.clear()
+
+
+def draw_main():
+    n = S["layout"]
+    if n == 2:
+        draw_main2()
+    else:
+        for i in range(n):
+            draw_cell(i, n)
+
+
+def tap_main(x, y):
+    n = S["layout"]
+    if n == 2:
+        return tap_main2(x, y)
+    for i in range(n):
+        x0, y0, w, h = cell_box(i, n)
+        if x0 <= x < x0 + w + 4 and y0 <= y < y0 + h + 4:
+            if pid_of(i) is None:
+                return
+            if n == 4 and y >= y0 + h - CELL4_BED - 4 and bed_mode(i)[3]:
+                bed_tap(i)
+            else:
+                open_detail(i)
+            return
+
+
+# --- 2-printer layout: two tall cards ---
 
 def card_x(i):
     return 4 + i * (CARD_W + GAP)
 
 
-def draw_main():
+def draw_main2():
     for i in (0, 1):
         x0 = card_x(i)
         xi = x0 + 8
@@ -283,19 +341,85 @@ def draw_main():
         txt(k + "bedtxt", x0 + 8, BED_Y + 7, text, F_SMALL, fg, bg, CARD_W - 16, 1)
 
 
-def tap_main(x, y):
-    global view, last_poll
+def tap_main2(x, y):
     i = 0 if x < 160 else 1
     x0 = card_x(i)
     on_bed = x0 + 6 <= x <= x0 + CARD_W - 6 and BED_Y - 4 <= y <= BED_Y + BED_H + 4
     if on_bed and bed_mode(i)[3]:
         bed_tap(i)
     else:
-        view = i
-        queue_cache.pop(i, None)
-        last_poll = time.ticks_add(time.ticks_ms(), -60_000)   # load queue on next loop pass
-        d.fill(BG)
-        cache.clear()
+        open_detail(i)
+
+
+# --- 4- and 8-printer grids ---
+
+CELL4_BED = 16      # height of the bed strip / CLEAR BED button at the bottom of a 4-up cell
+
+
+def cell_box(i, n):
+    """(x, y, w, h) of slot i. Row-major: slots 0,1 on the top row."""
+    col, row = i % 2, i // 2
+    if n == 4:
+        return 4 + col * 158, 4 + row * 118, 154, 114
+    return 4 + col * 158, 4 + row * 59, 154, 55
+
+
+def bed_short(i):
+    """Compact bed status for 8-up cells: (text, colour)."""
+    t, fg, bg, tappable = bed_mode(i)
+    if tappable or t == "CLEAR BED":
+        return ("CONFIRM?" if t == "TAP TO CONFIRM" else "CLEAR BED"), AMBER
+    st = data[i]
+    if st and st["state"] in RUNNING:
+        return "%dC" % round((st.get("temperatures") or {}).get("bed") or 0), GREY
+    return ("READY", GREEN) if st else ("", GREY)
+
+
+def draw_cell(i, n):
+    x0, y0, w, h = cell_box(i, n)
+    k = "c%d" % i
+    xi, iw = x0 + 10, w - 16                 # text column right of the 4 px state accent
+    box(k + "bg", x0, y0, w, h, CARD)
+    pid = pid_of(i)
+    if pid is None:
+        txt(k + "name", xi, y0 + 5, "empty slot", F_SMALL, TRACK, CARD, iw)
+        return
+    st = data[i]
+    if st is None:
+        label, col, name = "NO DATA", RED, "Printer %d" % pid
+    else:
+        label, col = badge_for(st)
+        name = st["name"]
+    box(k + "acc", x0, y0, 4, h, col)
+    run = bool(st) and st["state"] in RUNNING
+    pct = int(st.get("progress") or 0) if st else 0
+    # % means nothing for an idle/offline printer; FINISH/FAILED keep theirs
+    pct_s = "%d%%" % pct if st and st["state"] not in ("IDLE",) else "-"
+    left = fmt_mins(st.get("remaining_time")) if run else ""
+    if n == 4:
+        txt(k + "name", xi, y0 + 5, name, F_MED, WHITE, CARD, iw)
+        txt(k + "pct", xi, y0 + 28, pct_s, F_BIG, WHITE, CARD, iw)
+        bar_y, bar_h = y0 + 70, 5
+        txt(k + "state", xi, y0 + 81, label, F_LABEL, col, CARD, 72)
+        txt(k + "left", xi + 72, y0 + 79, left, F_SMALL, WHITE, CARD, iw - 72, 2)
+        text, fg, bg, _ = bed_mode(i)
+        by = y0 + h - CELL4_BED - 2
+        if box(k + "bed", x0 + 8, by, w - 12, CELL4_BED, bg):
+            cache.pop(k + "bedt", None)
+        txt(k + "bedt", x0 + 10, by + 2, text, F_LABEL, fg, bg, w - 16, 1)
+    else:
+        txt(k + "name", xi, y0 + 4, name, F_SMALL, WHITE, CARD, 88)
+        txt(k + "pct", xi + 88, y0 + 2, pct_s, F_MED, WHITE, CARD, iw - 88, 2)
+        bar_y, bar_h = y0 + 25, 4
+        # the accent colour already says "printing", so a running printer just shows its time left
+        state = left if st and st["state"] in ("RUNNING", "PREPARE") else label
+        txt(k + "state", xi, y0 + 36, state, F_LABEL, col, CARD, 66)
+        bs, bc = bed_short(i)
+        txt(k + "bed", xi + 66, y0 + 36, bs, F_LABEL, bc, CARD, iw - 66, 2)
+    if cache.get(k + "bar") != (pct, col):
+        d.rect(xi, bar_y, iw, bar_h, TRACK)
+        d.rect(xi, bar_y, iw * pct // 100, bar_h, col)
+        cache[k + "bar"] = (pct, col)
 
 
 def bed_tap(i):
@@ -304,11 +428,11 @@ def bed_tap(i):
         confirm.pop(i)
         flash[i] = ("CLEARING...", AMBER, time.ticks_add(now, 30_000))
         redraw()
-        ok = clear_plate(config.PRINTER_IDS[i])
+        ok = clear_plate(pid_of(i))
         log("clear-plate", i, ok)
         flash[i] = ("BED CLEARED" if ok else "CLEAR FAILED", GREEN if ok else RED,
                     time.ticks_add(time.ticks_ms(), 3000))
-        data[i] = fetch(config.PRINTER_IDS[i]) or data[i]
+        data[i] = fetch(pid_of(i)) or data[i]
     else:
         confirm[i] = time.ticks_add(now, CONFIRM_MS)
 
@@ -440,9 +564,12 @@ class App:
 
     def status(self):
         printers = []
-        for i, st in enumerate(data):
+        for i in range(S["layout"]):
+            st, pid = data[i], pid_of(i)
+            if pid is None:
+                continue
             if not st:
-                printers.append({"ok": False, "name": "Printer %d" % config.PRINTER_IDS[i]})
+                printers.append({"ok": False, "name": "Printer %d" % pid})
                 continue
             t = st.get("temperatures") or {}
             trays = []
@@ -467,7 +594,7 @@ class App:
         return {"printers": printers, "device": {
             "screen_on": screen_on, "view": "main" if view == "main" else "printer %d" % (view + 1),
             "rssi": rssi, "ip": wl.ifconfig()[0], "uptime_s": time.ticks_diff(time.ticks_ms(), boot_ms) // 1000,
-            "free": gc.mem_free(), "idf_free": idf, "poll_s": S["poll"], "idle_min": S["idle"], "bambuddy": S["bambuddy"],
+            "free": gc.mem_free(), "idf_free": idf, "poll_s": S["poll"], "idle_min": S["idle"], "bambuddy": S["bambuddy"], "layout": S["layout"], "fetch_ms": fetch_ms,
             "last_error": last_error}}
 
     def apply(self, form):
@@ -478,6 +605,13 @@ class App:
                 S["idle"] = max(1, min(600, int(form["idle"])))
             if form.get("bambuddy", "").startswith("http"):
                 S["bambuddy"] = form["bambuddy"].rstrip("/")
+            if form.get("layout") and int(form["layout"]) in LAYOUTS and int(form["layout"]) != S["layout"]:
+                global view, last_poll
+                S["layout"] = int(form["layout"])
+                view = "main"                       # repaint the new grid and fetch its printers now
+                d.fill(BG)
+                cache.clear()
+                last_poll = time.ticks_add(time.ticks_ms(), -60_000)
         except ValueError:
             pass
         with open("settings.json", "w") as f:
@@ -552,7 +686,7 @@ _net_fail = 0
 
 
 def needs_attention():
-    for st in data:
+    for st in data[:S["layout"]]:
         if st and (st["state"] in RUNNING or st.get("awaiting_plate_clear") or st.get("hms_errors")):
             return True
     return False
@@ -573,6 +707,7 @@ def run():
 
     last_poll = time.ticks_add(time.ticks_ms(), -60_000)
     pressed = False
+    rr = 0                                  # round-robin slot to fetch next
     while True:
         now = time.ticks_ms()
 
@@ -592,21 +727,29 @@ def run():
         elif not p and pressed and tp.raw() is None:
             pressed = False
 
-        # --- poll Bambuddy ---
-        if time.ticks_diff(now, last_poll) >= S["poll"] * 1000:
+        # --- poll Bambuddy: ONE request per step, spread evenly over the poll interval ---
+        # Fetching every printer back-to-back blocked the loop for seconds with 8 printers,
+        # so taps were missed. Now the loop never blocks for more than one HTTP request.
+        slots = S["layout"]
+        # min 1.2 s between requests: a fetch takes ~0.3-0.9 s on the ESP32, leave time for touch
+        if time.ticks_diff(now, last_poll) >= max(S["poll"] * 1000 // slots, 1200):
             last_poll = now
             if not wlan.isconnected():
                 wlan = connect()
-            for n, pid in enumerate(config.PRINTER_IDS[:2]):
-                data[n] = fetch(pid)
+            q = queue_cache.get(view) if view != "main" else None
+            if view != "main" and (q is None or time.ticks_diff(now, q[0]) > 30_000):
+                st = data[view]                  # detail view: refresh its queue as its own step
+                queue_cache[view] = (now, next_jobs(pid_of(view), st and st.get("model") or "A1"))
+            else:
+                if rr >= slots:
+                    rr = 0
+                pid = pid_of(rr)
+                data[rr] = fetch(pid) if pid is not None else None
                 gc.collect()
-            self_heal(any(data) or not wlan.isconnected())   # no-Wi-Fi is handled by connect()
-            if view != "main":
-                q = queue_cache.get(view)
-                if q is None or time.ticks_diff(now, q[0]) > 30_000:
-                    st = data[view]
-                    queue_cache[view] = (now, next_jobs(config.PRINTER_IDS[view],
-                                                        st and st.get("model") or "A1"))
+                rr += 1
+                if rr >= slots:                  # finished a full round of printers
+                    rr = 0
+                    self_heal(any(data[:slots]) or not wlan.isconnected())  # no Wi-Fi: connect() handles it
             if needs_attention():
                 last_activity = time.ticks_ms()
                 if not screen_on:

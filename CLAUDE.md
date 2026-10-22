@@ -12,12 +12,16 @@ which is git-ignored. Read it too if it exists.
 
 ## 1. What it is
 
-A 320×240 touchscreen that shows two Bambu Lab printers
-(or any two printers) managed by **Bambuddy** (self-hosted printer manager, github.com/maziggy/bambuddy):
+A 320×240 touchscreen that shows 2, 4 or 8 Bambu Lab printers
+managed by **Bambuddy** (self-hosted printer manager, github.com/maziggy/bambuddy):
 
-- **Main view** – one card per printer: printer name (fills the card width), state badge,
+- **Main view** – layout 2, 4 or 8 printers (`S["layout"]`, web page *Layout*, `LAYOUT` in config).
+  Layout 2 = one tall card per printer: printer name (fills the card width), state badge,
   big %, progress bar, filename, LEFT / LAYER rows, and a **bed strip** at the bottom
   (BED IN USE / BED READY / amber **CLEAR BED** button when Bambuddy is waiting for the plate to be cleared).
+  Layout 4 = quarters (state-coloured left edge, name, big %, bar, state + time left, bed strip with CLEAR BED).
+  Layout 8 = 2 × 4 compact rows (edge, name, %, thin bar, time-left-or-state, short bed status; clear
+  the bed from the detail view). Slot i shows `PRINTER_IDS[i]`; missing ids show "empty slot".
 - **Detail view** – tap a card: file, progress, temps (actual/target), speed, fan, Wi-Fi,
   4 AMS filament swatches (real colour; the colour strip is also a **remaining-filament gauge**
   that fills from the bottom; active slot outlined white), the next 2 queued jobs with print time
@@ -148,6 +152,11 @@ deploy `web.py`, reboot, then deploy the new module.
    If a `box()` behind text is repainted, pop that text's cache key so the text is redrawn on top.
 
 ### 5.3 Touch (`touch.py`, `calibrate.py`)
+8a. **Touch is only read between loop steps, and an HTTP fetch blocks the loop (~0.5 s each on the ESP32,
+    mostly JSON parsing).** Fetching all 8 printers back-to-back made taps unresponsive. `run()` therefore
+    fetches ONE printer per step (round-robin `rr`), at least 1.2 s apart (`max(poll*1000//slots, 1200)`),
+    and the detail view's queue is its own step. Don't batch fetches again. The web page shows
+    `fetch_ms`. Making touch instant would need reading the response in chunks and polling touch in between.
 8. Touch uses `SoftSPI` on pins 25/32/39/33 — not the display's SPI bus.
 9. Press detection uses the **Z1 pressure** reading (`> PRESS_Z = 120`), not the IRQ pin.
 10. **Axes are swapped** on this unit (raw Y → screen X). `touch_cal.py` holds
@@ -182,7 +191,7 @@ deploy `web.py`, reboot, then deploy the new module.
     fresh IDF free 142 KB → Wi-Fi up 86 KB → after one heap doubling ~25 KB. A *second* growth
     (when the 112 KB heap is full) took the last ~25 KB and **all networking died silently**:
     sockets time out (`ETIMEDOUT`/116), DNS fails (`-203`), the web page hangs, `fetch` returns nothing.
-17. Current steady state: GC heap 112 KB, ~48–57 KB used, **IDF free ~24 KB** (shown on the web page
+17. Current steady state: GC heap 112 KB, ~48–60 KB used (8-printer layout: ~51–66 KB free), **IDF free ~24 KB** (shown on the web page
     as "WiFi xx KB" and in `/api/status` as `device.idf_free`). Keep Python usage well under ~90 KB.
 18. Things already done to stay inside the budget — don't undo them:
     - Code is **precompiled to .mpy** (compiling a 20 KB .py on the board spikes RAM).
@@ -261,11 +270,15 @@ log or store those.
    messages), `view` (`"main"` or printer index 0/1), `cache` (what's on screen), `screen_on`, `last_activity`.
 2. **Helpers**: `txt(key, x, y, s, font, fg, bg, w, align)` / `box()` (draw-if-changed), `badge_for`,
    `bed_mode(i)` → `(text, fg, bg, tappable)` — single source of truth for the bed strip on both views.
-3. **API**: `slim`, `fetch`, `clear_plate`, `next_jobs` (streaming parser).
-4. **Views**: `draw_main`/`tap_main`, `draw_detail`/`draw_filament`/`draw_next`/`tap_detail`, `bed_tap`.
+3. **API**: `slim`, `fetch` (records `fetch_ms`), `clear_plate`, `next_jobs` (streaming parser).
+   `pid_of(i)` maps a slot to its Bambuddy printer id (None = empty slot).
+4. **Views**: `draw_main`/`tap_main` dispatch on `S["layout"]`: 2 → `draw_main2`/`tap_main2` (tall cards),
+   4/8 → `draw_cell(i, n)` + `cell_box(i, n)` + `bed_short(i)`. `open_detail(i)`, `draw_detail`/`draw_filament`/
+   `draw_next`/`tap_detail`, `bed_tap`.
 5. **`App`**: `status()`, `apply(form)`, `screen(on)` — the only interface `web.py` uses.
-6. **`run()`** (25 ms tick): touch → poll Bambuddy every `S["poll"]` s (+ queue every 30 s on the
-   detail view) → expire confirm/flash → sleep check → `web.poll()`.
+6. **`run()`** (25 ms tick): touch → one polling step (next printer round-robin, or the detail view's
+   queue every 30 s; ≥ 1.2 s apart, see 8a) → self-heal check after each full round → expire
+   confirm/flash → sleep check → `web.poll()`. `App.apply()` switching layout repaints and polls at once.
 
 Layout reference — main view: cards at x=4 and x=162, 154×226 from y=7, inner text x0+8, width 138.
 Name y10 (F_NAME), badge box y42 h17 (F_LABEL at y44), % y63 (F_BIG), bar y108 h6, file y122 (F_SMALL),
@@ -274,7 +287,12 @@ Detail view: header 0–34 (name F_NAME y3, badge 212,9 100×17), file y40, bar 
 (246,56) right-aligned in 66, lines y80/98/116 (F_SMALL), swatches y136 (4 × 72×36, pitch 78), NEXT
 label y183 + 2 job rows y180/197 (name x52 w196, time x252 w60 right), buttons y216 h22 (bed 8–204, BACK 232–312).
 
-HTTP requests block the loop (~0.1–0.9 s per printer), so touches/web requests during a poll
+Grid layouts: `cell_box()` — 4-up cells 154×114 at x 4/162, y 4/122 (name F_MED y+5, % F_BIG y+28, bar y+70 h5,
+state F_LABEL y+81 + time F_SMALL right, bed strip h16 at bottom); 8-up cells 154×55 at y 4/63/122/181
+(name F_SMALL w88, % F_MED right, bar y+25 h4, state/time F_LABEL y+36 w66, bed F_LABEL right). Text
+starts at x0+10, right of the 4 px state edge.
+
+HTTP requests block the loop (~0.5 s per printer), so touches/web requests during a poll
 wait until it finishes. If that ever matters, the next step is uasyncio (mind §5.5).
 
 ---
@@ -291,9 +309,6 @@ wait until it finishes. If that ever matters, the next step is uasyncio (mind §
 
 ## 10. Ideas not yet built
 
-- More than 2 printers: see README *More than two printers?*. Preferred is one unit per pair (`PRINTER_IDS` +
-  unique `HOSTNAME` in config). On one screen, the plan is paging pairs of cards (`data` for all printers +
-  a `page` index, auto-cycle, jump to printers needing attention) or a 2×2 compact grid.
 - Alerts screen (full-screen red on HMS error / failure).
 - Pause/resume from the detail view (needs a confirm step like CLEAR BED; check the API first).
 - Job thumbnail on the detail view (`/printers/{id}/cover`, PNG — needs a decoder or server-side conversion; mind §5.5).

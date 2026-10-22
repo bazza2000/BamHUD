@@ -3,15 +3,20 @@
 **A heads-up display for [Bambuddy](https://github.com/maziggy/bambuddy).** A desk touchscreen for Bambu Lab printers managed by Bambuddy,
 built on the cheap **ESP32-2432S028 "Cheap Yellow Display"** (CYD) and MicroPython.
 
-| Main view | Detail view (tap a card) | Clear-bed confirm |
+| 2 printers (default) | Detail view (tap a printer) | Clear-bed confirm |
 |---|---|---|
-| ![Main view](docs/screenshot_main.png) | ![Detail view](docs/screenshot_detail.png) | ![Confirm](docs/screenshot_confirm.png) |
+| ![2-printer layout](docs/screenshot_main.png) | ![Detail view](docs/screenshot_detail.png) | ![Confirm](docs/screenshot_confirm.png) |
+
+| 4 printers | 8 printers |
+|---|---|
+| ![4-printer layout](docs/screenshot_4up.png) | ![8-printer layout](docs/screenshot_8up.png) |
 
 *(Screenshots are rendered by `tools/simulate.py --demo` from the real display code, using invented data.)*
 
 ## Features
 
-- **Two printers at a glance**: name, state, big progress %, progress bar, file name, time left, layer.
+- **2, 4 or 8 printers per screen**: large cards for two printers, quarters for four, or a compact
+  2 × 4 grid for eight, switchable from the web page. Each shows name, state, progress and time left.
 - **Bed status + CLEAR BED button**: when Bambuddy is waiting for a plate to be cleared, an amber
   button appears; tap it, then **TAP TO CONFIRM** within 5 s, and Bambuddy's scheduler can start
   the next queued job.
@@ -38,39 +43,46 @@ built on the cheap **ESP32-2432S028 "Cheap Yellow Display"** (CYD) and MicroPyth
 > Tested with MicroPython **v1.29.0** and Bambuddy **v1.2.5.7** on two Bambu Lab A1 printers with AMS lite.
 > Other CYD revisions may need different display settings; see *Troubleshooting*.
 
-## More than two printers?
+## Layouts: 2, 4 or 8 printers
 
-BamHUD shows **two printers**, one per card. That's what it was built for (a two-printer farm), and
-it's what a 320×240 screen shows well at a glance. If you have more, there are two routes:
+BamHUD has three main-screen layouts. All of them open the same full-screen **detail view** when you
+tap a printer, and all of them refresh every printer in turn.
 
-**1. One BamHUD per pair of printers (recommended, no code changes).** The boards are cheap, and
-each one stays a glance-able display that can sit beside its two printers. For each unit, give
-`config.py` its own `PRINTER_IDS` and a unique `HOSTNAME`:
+| Layout | Each printer shows | Tapping |
+|---|---|---|
+| **2** (default) | Large card: name, state badge, big %, progress bar, file name, time left, layer, bed strip | Card → detail view. Amber **CLEAR BED** strip → clear (with confirm). |
+| **4** | Quarter: coloured state edge, name, big %, bar, state + time left, bed strip | Cell → detail view. Amber **CLEAR BED** strip → clear (with confirm). |
+| **8** | Compact row: coloured state edge, name, %, thin bar, time left (or state), bed status | Cell → detail view. Clear the bed from the detail view (cells are too small for a safe button). |
 
-```python
-# unit 1                                  # unit 2
-PRINTER_IDS = (1, 2)                      PRINTER_IDS = (3, 4)
-HOSTNAME = "bamhud"                       HOSTNAME = "bamhud-2"
-```
+The coloured left edge in the 4- and 8-printer layouts is the printer's state: blue printing, green
+done/idle, amber paused, red error/failed/offline. Idle and offline printers show "–" instead of a percentage.
 
-Then deploy to each with `python tools/deploy.py --host bamhud-2.local ...`. The printer ids are the
-ones Bambuddy uses (`GET /api/v1/printers/` lists them). Every unit talks to Bambuddy on its own.
+### Setting it up
 
-**2. Modify the code to show more on one screen.** It's doable, but it's real layout work. Two approaches:
+1. List your printers in `config.py`, in screen order (row by row: left, right, next row…), using
+   Bambuddy's printer ids (`GET /api/v1/printers/` lists them):
+   ```python
+   PRINTER_IDS = (1, 2, 3, 4, 5, 6)   # up to 8
+   LAYOUT = 8                         # 2, 4 or 8; leave it out to pick automatically from the count
+   ```
+2. Deploy `config.py` (`python tools/deploy.py config.py`).
+3. Switch layouts any time from the web page: **Settings → Layout → Save settings** (password
+   required). The screen redraws immediately. The choice is saved on the display and overrides `LAYOUT`.
 
-- **Pages**: keep the two-card layout and add a page indicator. A tap on the header or a swipe moves
-  to the next pair, and it could auto-cycle every few seconds while idle and jump to any printer
-  that needs attention (CLEAR BED or an error). This is the least disruptive option: in `app.py`, make
-  `data` hold every printer, add a `page` index, and draw `data[2*page : 2*page+2]` with the existing
-  `draw_main()`.
-- **Grid**: four smaller cards (2×2, about 154×112 each) with name, badge, % and bed status only. Tap
-  for the existing detail view. This needs a new `draw_main()` layout and smaller fonts (see *Fonts*).
+Slots without a printer show "empty slot". A layout smaller than your printer list shows the first
+2 or 4 printers.
 
-Either way, keep in mind:
-- Each printer adds about 0.1–0.9 s of HTTP polling per cycle, so raise `POLL_SECONDS` with
-  more printers. The loop is single-threaded, and touch waits while it polls.
-- Each printer's slimmed status costs about 1 KB of RAM. A handful is fine, but see *Memory* before going big.
-- Use `tools/simulate.py` to iterate on the layout before touching the hardware.
+### Things to know
+
+- **Refresh rate.** One printer is fetched at a time, at least 1.2 s apart (a fetch takes ~0.5 s on the
+  ESP32), so the screen stays responsive to taps. With 8 printers each one refreshes every ~10 s; with 2,
+  every `POLL_SECONDS`. The detail view's job queue is fetched as its own step.
+- **Taps during a fetch.** The loop is single-threaded, so a very quick tap that lands exactly during a
+  fetch can be missed. A slightly longer press always registers.
+- **Memory.** Each printer adds ~1 KB; 8 printers run fine (see *Memory*).
+- **More than 8, or displays beside the printers?** Run several BamHUDs, each with its own
+  `PRINTER_IDS` and a unique `HOSTNAME` (e.g. `bamhud`, `bamhud-2`), then deploy with
+  `--host bamhud-2.local`. Every unit talks to Bambuddy on its own.
 
 ## How it works
 
@@ -136,8 +148,8 @@ python -m esptool --port COM3 --connect-attempts 30 write-flash --erase-all -z 0
 cp config.example.py config.py      # Windows: copy config.example.py config.py
 ```
 
-Edit `config.py`: Wi-Fi SSID/password, your Bambuddy URL (ending in `/api/v1`), the two Bambuddy
-printer ids to show, and a **strong `WEB_PASSWORD`**. `config.py` is git-ignored and is only ever
+Edit `config.py`: Wi-Fi SSID/password, your Bambuddy URL (ending in `/api/v1`), the Bambuddy
+printer ids to show (`PRINTER_IDS`, up to 8, see *Layouts*), and a **strong `WEB_PASSWORD`**. `config.py` is git-ignored and is only ever
 copied to the board.
 
 ### 6. First deploy (USB)
@@ -208,6 +220,7 @@ then deploy the new module.
 ```bash
 python tools/simulate.py           # live data from your Bambuddy -> sim/*.png (main, detail per printer, demo states)
 python tools/simulate.py --demo    # invented data, no network or config.py needed -> docs/screenshot_*.png
+                                  # (2-, 4- and 8-printer layouts, detail view, clear-bed confirm)
 ```
 
 It imports the real `app.py`, `ili9341.py` and `font.py` with stub hardware: the display's SPI command

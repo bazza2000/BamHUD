@@ -63,11 +63,17 @@ def preflight(host, force):
     on top of the first draw/fetch after a reboot once exhausted the IDF heap (CLAUDE.md 5.5)."""
     import json
     for _ in range(30):
-        try:
-            with urllib.request.urlopen("http://%s/api/status" % host, timeout=10) as r:
-                dev = json.loads(r.read())["device"]
-        except Exception as e:
-            sys.exit("display not answering at %s (%s) - try --usb" % (host, e))
+        dev, err = None, None
+        for _attempt in range(3):          # the display answers between printer fetches; be patient
+            try:
+                with urllib.request.urlopen("http://%s/api/status" % host, timeout=20) as r:
+                    dev = json.loads(r.read())["device"]
+                break
+            except Exception as e:
+                err = e
+                time.sleep(2)
+        if dev is None:
+            sys.exit("display not answering at %s (%s) - try --usb" % (host, err))
         up, idf = dev.get("uptime_s", 999), dev.get("idf_free", -1)
         if up < 45:
             print("display booted %ds ago, waiting for it to settle..." % up)

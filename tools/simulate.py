@@ -220,6 +220,30 @@ def demo(out_dir):
     app.cache.clear()
     app.draw_main()
     save("screenshot_confirm.png")
+    app.confirm.clear()
+
+    # 4- and 8-printer layouts: a mixed farm
+    app.config.PRINTER_IDS = tuple(range(1, 9))
+    hot = {"nozzle": 220, "nozzle_target": 220, "bed": 65, "bed_target": 65}
+    farm = [
+        demo_status("PRINTER-01", state="RUNNING", progress=47, remaining_time=83, temperatures=hot),
+        demo_status("PRINTER-02", state="FINISH", progress=100, awaiting_plate_clear=True),
+        demo_status("PRINTER-03", state="RUNNING", progress=12, remaining_time=254, temperatures=hot),
+        demo_status("PRINTER-04", state="IDLE"),
+        demo_status("PRINTER-05", state="PAUSE", progress=63, remaining_time=41, temperatures=hot),
+        demo_status("PRINTER-06", state="FAILED", progress=8, hms_errors=["0300-0100-0001-0007"]),
+        demo_status("PRINTER-07", state="RUNNING", progress=91, remaining_time=6, temperatures=hot),
+        None,                                               # offline / Bambuddy can't reach it
+    ]
+    for i, st in enumerate(farm):
+        app.data[i] = st
+    for n in (4, 8):
+        app.S["layout"] = n
+        app.d.fill(app.BG)
+        app.cache.clear()
+        app.draw_main()
+        save("screenshot_%dup.png" % n)
+    app.S["layout"] = 2
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ h1{font-size:20px;margin:0 0 12px}h2{font-size:14px;color:var(--mute);text-trans
 .sw{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}.sw span{display:flex;align-items:center;gap:4px;font-size:12px;background:var(--bg);padding:3px 6px;border-radius:4px}
 .sw b{width:12px;height:12px;border-radius:2px;display:inline-block;border:1px solid var(--track)}
 form{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center}
-input{background:var(--bg);color:var(--fg);border:1px solid var(--track);border-radius:6px;padding:8px;font:inherit;width:100%}
+input,select{background:var(--bg);color:var(--fg);border:1px solid var(--track);border-radius:6px;padding:8px;font:inherit;width:100%}
 button{background:var(--run);color:#fff;border:0;border-radius:6px;padding:9px 14px;font:inherit;cursor:pointer}
 button.alt{background:var(--track)}.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}#msg{min-height:1.4em;color:var(--warn)}
 </style></head><body>
@@ -25,6 +25,7 @@ button.alt{background:var(--track)}.btns{display:flex;gap:8px;flex-wrap:wrap;mar
 <label>Poll seconds</label><input name=poll type=number min=2 max=120>
 <label>Sleep after (min)</label><input name=idle type=number min=1 max=600>
 <label>Bambuddy URL</label><input name=bambuddy>
+<label>Layout</label><select name=layout><option value=2>2 printers (large cards)</option><option value=4>4 printers (quarters)</option><option value=8>8 printers (compact)</option></select>
 <label>Password</label><input name=pw type=password autocomplete=current-password>
 </form>
 <div class=btns><button onclick="post('/api/settings',new FormData(sf))">Save settings</button>
@@ -54,9 +55,9 @@ async function load(){try{
   +'<div style="margin-top:6px;color:var('+(p.awaiting_clear?'--warn':'--ok')+')">'+(p.awaiting_clear?'Bed needs clearing':run?'Bed in use':'Bed ready')+'</div>'
   +'<div class=sw>'+p.trays.map(t=>'<span><b style="background:#'+esc(t.c)+'"></b>'+esc(t.t)+' '+t.r+'%</span>').join('')+'</div></div>'}).join('');
  const d=s.device;
- dev.innerHTML='Screen <b>'+(d.screen_on?'on':'off')+'</b> &middot; view '+esc(d.view)+' &middot; WiFi '+d.rssi+' dBm &middot; IP '+esc(d.ip)
+ dev.innerHTML='Screen <b>'+(d.screen_on?'on':'off')+'</b> &middot; view '+esc(d.view)+' &middot; fetch '+(d.fetch_ms||0)+' ms &middot; WiFi '+d.rssi+' dBm &middot; IP '+esc(d.ip)
   +'<br>Up '+mins(Math.floor(d.uptime_s/60))+' &middot; free RAM '+Math.round(d.free/1024)+' KB (WiFi '+Math.round(d.idf_free/1024)+' KB) &middot; sleeps after '+d.idle_min+' min idle'+(d.last_error?'<br><span style="color:var(--bad)">'+esc(d.last_error)+'</span>':'');
- if(!filled){sf.poll.value=d.poll_s;sf.idle.value=d.idle_min;sf.bambuddy.value=d.bambuddy;filled=true}
+ if(!filled){sf.poll.value=d.poll_s;sf.idle.value=d.idle_min;sf.bambuddy.value=d.bambuddy;sf.layout.value=d.layout||2;filled=true}
 }catch(e){dev.textContent='Display not responding'}}
 load();setInterval(load,5000);
 </script></body></html>
