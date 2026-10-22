@@ -187,6 +187,10 @@ live one: `.py` must compile, `.mpy` must be MicroPython v6 bytecode, fonts must
 HTML. Only known file names are accepted, and the board deletes `X.py` when `X.mpy` arrives (MicroPython
 prefers `.py`). A runtime bug in `app.py` can still stop the web server; recover over USB.
 
+Before uploading, `deploy.py` checks the display: it waits until it has been up for 45 s (uploads landing during
+the first draw after a reboot can exhaust its Wi-Fi memory) and refuses if Wi-Fi memory is already low
+(reboot it or use `--usb`; `--force` overrides).
+
 After an update, check `http://<display>/api/status`: `device.last_error` should be empty and
 `device.idf_free` (free Wi-Fi memory) should stay above ~15 KB.
 
@@ -252,7 +256,8 @@ Set `DEBUG = True` in `config.py` to log taps, redraws and timings.
 | Upside down | MADCTL `0x20` ↔ `0xE0`, then recalibrate touch. |
 | Faint flicker | Wi-Fi power-save current spikes dip the backlight; the code sets `pm=PM_NONE` and lower TX power. Keep those. |
 | Taps land in the wrong place | Recalibrate (step 7). |
-| Screen frozen / web page times out / `ETIMEDOUT` | Wi-Fi memory exhausted. Check `idf_free`; see *Memory*. Make sure big modules are deployed as `.mpy`. |
+| Screen frozen / web page times out / `ETIMEDOUT` | Wi-Fi memory exhausted. The display restarts itself if this persists (self-heal); check `idf_free` and see *Memory*. Make sure big modules are deployed as `.mpy`. |
+| White screen | The board is powered but the app isn't drawing (stuck or crashed during boot). Power-cycle it; if it persists, read `tools/serial_log.py` and redeploy over `--usb`. |
 | *Connecting to WiFi…* forever | Wrong SSID/password, or a 5 GHz-only network. |
 | Cards say NO DATA | Bambuddy URL wrong/unreachable, or Bambuddy auth is enabled (the display sends no API key). |
 

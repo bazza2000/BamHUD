@@ -110,7 +110,8 @@ to `build/*.mpy` and uploads the `.mpy`; the board then deletes the matching `.p
 MicroPython imports `X.py` in preference to `X.mpy`. `--source` uploads the `.py` instead (debugging only:
 it brings back the compile-time RAM spike). `main.py`, `config.py`, `touch_cal.py` stay as source.
 
-Wi-Fi upload safety (in `web.py`): password required (`X-Password` header = `WEB_PASSWORD`);
+Wi-Fi deploys first run a **preflight** (`/api/status`): wait until uptime ≥ 45 s, refuse if `idf_free` < 12 KB
+(`--force` to override). Wi-Fi upload safety (in `web.py`): password required (`X-Password` header = `WEB_PASSWORD`);
 only names allowed by `allowed()` (the `UPLOADABLE` list, their `.mpy`, `index.html`, `f_*.bfn`);
 body written to `name.new` and validated (`.py` compiled on the board, `.mpy` must start `M\x06`,
 fonts must start `BFN1`, html must start `<!doctype html`) before it replaces the live file.
@@ -188,6 +189,12 @@ deploy `web.py`, reboot, then deploy the new module.
     - The queue (`/queue/?status=pending`, ~1.6 KB per job) is stream-parsed one object at a time.
     - Every `requests` call has `timeout=HTTP_TIMEOUT` (6 s) — without it a starved/stalled socket
       froze the whole loop forever.
+    - `deploy.py` preflight: Wi-Fi uploads wait until the display has been up ≥ 45 s and refuse if `idf_free` < 12 KB
+      (`--force` overrides). An upload landing on the first draw/fetch after a reboot once exhausted the IDF heap
+      (connection dropped, `idf_free` 0, board stuck with a white screen until power-cycled).
+    - `web.py` uploads `gc.collect()` first and stream through one reused 512-byte buffer.
+    - **Self-heal** (`app.self_heal`, once per poll): `machine.reset()` after 3 polls in a row with < 3 KB IDF heap, or
+      ~2 min of failed fetches while IDF heap < 10 KB. A Bambuddy outage alone (memory fine) never resets the board.
 19. How to measure (from a raw REPL with main.py stopped):
     `import esp32,micropython; print(sum(h[1] for h in esp32.idf_heap_info(esp32.HEAP_DATA))); micropython.mem_info()`
     — `GC: total` shows whether the heap has grown (56000 = not yet, 112000 = once).

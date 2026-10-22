@@ -58,7 +58,30 @@ def prepare(files, source):
     return out
 
 
-def via_wifi(host, pairs, reboot):
+def preflight(host, force):
+    """Don't upload into a board that is still booting or short of Wi-Fi memory: an upload landing
+    on top of the first draw/fetch after a reboot once exhausted the IDF heap (CLAUDE.md 5.5)."""
+    import json
+    for _ in range(30):
+        try:
+            with urllib.request.urlopen("http://%s/api/status" % host, timeout=10) as r:
+                dev = json.loads(r.read())["device"]
+        except Exception as e:
+            sys.exit("display not answering at %s (%s) - try --usb" % (host, e))
+        up, idf = dev.get("uptime_s", 999), dev.get("idf_free", -1)
+        if up < 45:
+            print("display booted %ds ago, waiting for it to settle..." % up)
+            time.sleep(45 - up)
+            continue
+        if 0 <= idf < 12000 and not force:
+            sys.exit("display has only %d bytes of Wi-Fi memory free; reboot it first "
+                     "(web page) or use --usb, or pass --force" % idf)
+        return
+    sys.exit("display kept rebooting - use --usb")
+
+
+def via_wifi(host, pairs, reboot, force=False):
+    preflight(host, force)
     pw = web_password()
     for path, remote in pairs:
         data = open(path, "rb").read()
@@ -132,9 +155,10 @@ if __name__ == "__main__":
     ap.add_argument("--host", default=DEFAULT_HOST)
     ap.add_argument("--source", action="store_true", help="upload .py source, don't compile")
     ap.add_argument("--no-reboot", action="store_true")
+    ap.add_argument("--force", action="store_true", help="upload even if the display reports low Wi-Fi memory")
     a = ap.parse_args()
     pairs = prepare(a.files, a.source)
     if a.usb:
         via_usb(a.port, pairs, not a.no_reboot)
     else:
-        via_wifi(a.host, pairs, not a.no_reboot)
+        via_wifi(a.host, pairs, not a.no_reboot, a.force)

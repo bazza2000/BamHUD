@@ -463,11 +463,7 @@ class App:
             rssi = wl.status("rssi")
         except Exception:
             rssi = 0
-        try:                    # Wi-Fi/IDF heap left over; below ~10 KB networking starts failing
-            import esp32
-            idf = sum(h[1] for h in esp32.idf_heap_info(esp32.HEAP_DATA))
-        except Exception:
-            idf = -1
+        idf = idf_free()
         return {"printers": printers, "device": {
             "screen_on": screen_on, "view": "main" if view == "main" else "printer %d" % (view + 1),
             "rssi": rssi, "ip": wl.ifconfig()[0], "uptime_s": time.ticks_diff(time.ticks_ms(), boot_ms) // 1000,
@@ -527,6 +523,34 @@ def connect():
     return wlan
 
 
+def idf_free():
+    """Free ESP-IDF heap (what Wi-Fi/lwIP live on); below ~10 KB networking starts failing. -1 off-device."""
+    try:
+        import esp32
+        return sum(h[1] for h in esp32.idf_heap_info(esp32.HEAP_DATA))
+    except Exception:
+        return -1
+
+
+def self_heal(net_ok):
+    """Restart the board if networking is starved or dead, instead of sitting frozen (CLAUDE.md 5.5).
+    Called once per poll: 3 polls in a row with < 3 KB IDF heap, or ~2 min of failed fetches while the IDF heap is
+    low (< 10 KB). A Bambuddy outage alone (fetches fail, memory fine) never triggers a reset."""
+    global _low_mem, _net_fail
+    idf = idf_free()
+    _low_mem = _low_mem + 1 if 0 <= idf < 3000 else 0
+    _net_fail = 0 if net_ok else _net_fail + 1
+    if _low_mem >= 3 or (_net_fail * S["poll"] >= 120 and 0 <= idf < 10000):
+        print("self-heal reset: idf_free", idf, "failed polls", _net_fail)
+        time.sleep_ms(200)
+        import machine
+        machine.reset()
+
+
+_low_mem = 0
+_net_fail = 0
+
+
 def needs_attention():
     for st in data:
         if st and (st["state"] in RUNNING or st.get("awaiting_plate_clear") or st.get("hms_errors")):
@@ -576,6 +600,7 @@ def run():
             for n, pid in enumerate(config.PRINTER_IDS[:2]):
                 data[n] = fetch(pid)
                 gc.collect()
+            self_heal(any(data) or not wlan.isconnected())   # no-Wi-Fi is handled by connect()
             if view != "main":
                 q = queue_cache.get(view)
                 if q is None or time.ticks_diff(now, q[0]) > 30_000:

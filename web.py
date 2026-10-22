@@ -159,13 +159,16 @@ class Web:
     def _upload(self, cl, f, name, length):
         tmp = name + ".new"
         got = 0
+        gc.collect()                      # start from a tidy heap: growth here starves Wi-Fi (CLAUDE.md 5.5)
+        buf = bytearray(512)              # one reused buffer instead of a new bytes object per chunk
+        mv = memoryview(buf)
         with open(tmp, "wb") as out:
             while got < length:
-                chunk = f.read(min(1024, length - got))
-                if not chunk:
+                n = f.readinto(mv[:min(512, length - got)])
+                if not n:
                     break
-                out.write(chunk)
-                got += len(chunk)
+                out.write(mv[:n])
+                got += n
         if got != length:
             os.remove(tmp)
             return self._send(cl, 400, "short upload %d/%d" % (got, length))
