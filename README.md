@@ -36,7 +36,7 @@ built on the cheap **ESP32-2432S028 "Cheap Yellow Display"** (CYD) and MicroPyth
 | | |
 |---|---|
 | Display | ESP32-2432S028 / 2432S028R "Cheap Yellow Display" (2.8", 320×240, ILI9341 + XPT2046 resistive touch, CH340 USB) |
-| Server | A running **Bambuddy** instance reachable over HTTP from the display, with **auth disabled** on your LAN (the display sends no API key) |
+| Server | A running **Bambuddy** instance reachable over HTTP from the display. With Bambuddy auth on, an **API key** (see *API key*); with auth off, nothing extra |
 | Network | 2.4 GHz Wi-Fi (the ESP32 can't join 5 GHz) |
 | PC | Python 3.9+ and a USB cable. Windows, macOS or Linux. (On Windows, [Thonny](https://thonny.org)'s bundled Python is fine.) |
 
@@ -149,8 +149,23 @@ cp config.example.py config.py      # Windows: copy config.example.py config.py
 ```
 
 Edit `config.py`: Wi-Fi SSID/password, your Bambuddy URL (ending in `/api/v1`), the Bambuddy
-printer ids to show (`PRINTER_IDS`, up to 8, see *Layouts*), and a **strong `WEB_PASSWORD`**. `config.py` is git-ignored and is only ever
+printer ids to show (`PRINTER_IDS`, up to 8, see *Layouts*), a Bambuddy `API_KEY` if your Bambuddy has
+auth switched on (below), and a **strong `WEB_PASSWORD`**. `config.py` is git-ignored and is only ever
 copied to the board.
+
+#### API key
+
+If your Bambuddy has authentication enabled, create a key in Bambuddy (**Settings → API Keys**) and put it
+in `config.py` as `API_KEY`. Give it these permissions:
+
+| Permission | Used for |
+|---|---|
+| **Read Status** | printer status and the job queue (required) |
+| **Control Printer** | the CLEAR BED button (optional; without it the button shows *NO PERMISSION*) |
+
+You can also limit the key to the printers in `PRINTER_IDS`. The key is sent as an `X-API-Key` header on
+every request. With auth off, leave `API_KEY = ""`; Bambuddy ignores keys then anyway. The web page shows
+whether a key is set (never the key itself).
 
 ### 6. First deploy (USB)
 
@@ -272,7 +287,8 @@ Set `DEBUG = True` in `config.py` to log taps, redraws and timings.
 | Screen frozen / web page times out / `ETIMEDOUT` | Wi-Fi memory exhausted. The display restarts itself if this persists (self-heal); check `idf_free` and see *Memory*. Make sure big modules are deployed as `.mpy`. |
 | White screen | The board is powered but the app isn't drawing (stuck or crashed during boot). Power-cycle it; if it persists, read `tools/serial_log.py` and redeploy over `--usb`. |
 | *Connecting to WiFi…* forever | Wrong SSID/password, or a 5 GHz-only network. |
-| Cards say NO DATA | Bambuddy URL wrong/unreachable, or Bambuddy auth is enabled (the display sends no API key). |
+| Cards say NO DATA | Bambuddy URL wrong or unreachable, or Bambuddy auth is on and `API_KEY` is missing or wrong. The web page's device line shows the exact error (e.g. *HTTP 401 - set API_KEY*, *HTTP 403 - needs Read Status*). |
+| CLEAR BED shows *NO PERMISSION* | The API key lacks **Control Printer** (or isn't allowed that printer). |
 
 ## Restoring
 
@@ -286,6 +302,8 @@ Set `DEBUG = True` in `config.py` to log taps, redraws and timings.
   on the network; settings, reboot and code uploads require `WEB_PASSWORD` (sent in plain HTTP).
 - The only write the display makes to Bambuddy is `clear-plate`, and only after two taps. Clearing a plate
   lets Bambuddy's scheduler start the next queued print, so make sure the bed really is clear.
+- `API_KEY` lives in `config.py` (git-ignored) and on the board, and is sent over plain HTTP on your LAN, as
+  with any Bambuddy API client. Give it only the permissions above, and limit it to your printers.
 - Bambuddy's `GET /printers/` response includes printers' LAN access codes; this project never displays,
   logs or stores it.
 

@@ -45,6 +45,9 @@ RUNNING = ("RUNNING", "PAUSE", "PREPARE")
 SPEEDS = {1: "Silent", 2: "Standard", 3: "Sport", 4: "Ludicrous"}
 CONFIRM_MS = 5000
 HTTP_TIMEOUT = 6           # seconds; without it a stalled socket freezes the whole loop
+# Optional Bambuddy API key (config.API_KEY). Needs "Read Status" (status + queue) and, for the
+# CLEAR BED button, "Control Printer". Ignored by Bambuddy servers that have auth switched off.
+HEADERS = {"X-API-Key": config.API_KEY} if getattr(config, "API_KEY", "") else {}
 
 # Runtime settings: config.py defaults, overridden by settings.json (written from the web page).
 LAYOUTS = (2, 4, 8)          # printers per screen: two tall cards, quarters, or 2 x 4 rows
@@ -178,16 +181,19 @@ def slim(st):
 
 
 fetch_ms = 0                 # duration of the last status fetch (shown on the web page)
+AUTH_HINT = {401: " - Bambuddy auth is on: set API_KEY in config.py",
+             403: " - API key lacks permission (needs Read Status) or this printer"}
 
 
 def fetch(pid):
     global last_error, fetch_ms
     t0 = time.ticks_ms()
     try:
-        r = requests.get("%s/printers/%d/status" % (S["bambuddy"], pid), timeout=HTTP_TIMEOUT)
+        r = requests.get("%s/printers/%d/status" % (S["bambuddy"], pid), headers=HEADERS,
+                         timeout=HTTP_TIMEOUT)
         out = slim(r.json()) if r.status_code == 200 else None
         if out is None:
-            last_error = "printer %d: HTTP %d" % (pid, r.status_code)
+            last_error = "printer %d: HTTP %d%s" % (pid, r.status_code, AUTH_HINT.get(r.status_code, ""))
         r.close()
         gc.collect()
         fetch_ms = time.ticks_diff(time.ticks_ms(), t0)
@@ -200,20 +206,26 @@ def fetch(pid):
 
 def clear_plate(pid):
     try:
-        r = requests.post("%s/printers/%d/clear-plate" % (S["bambuddy"], pid), timeout=HTTP_TIMEOUT)
-        ok = r.status_code < 300
+        r = requests.post("%s/printers/%d/clear-plate" % (S["bambuddy"], pid), headers=HEADERS,
+                          timeout=HTTP_TIMEOUT)
+        code = r.status_code
         r.close()
-        return ok
+        if code >= 300:
+            global last_error
+            last_error = "clear-plate printer %d: HTTP %d%s" % (
+                pid, code, " - API key needs Control Printer" if code == 403 else AUTH_HINT.get(code, ""))
+        return code
     except Exception as e:
         print("clear", pid, e)
-        return False
+        return 0
 
 
 def next_jobs(pid, model, want=2):
     """Pending queue jobs for this printer, parsed one object at a time to save RAM."""
     jobs = []
     try:
-        r = requests.get("%s/queue/?status=pending" % S["bambuddy"], timeout=HTTP_TIMEOUT)
+        r = requests.get("%s/queue/?status=pending" % S["bambuddy"], headers=HEADERS,
+                         timeout=HTTP_TIMEOUT)
         sock = r.raw
         depth, in_str, esc, obj = 0, False, False, None
         while len(jobs) < want:
@@ -428,10 +440,11 @@ def bed_tap(i):
         confirm.pop(i)
         flash[i] = ("CLEARING...", AMBER, time.ticks_add(now, 30_000))
         redraw()
-        ok = clear_plate(pid_of(i))
-        log("clear-plate", i, ok)
-        flash[i] = ("BED CLEARED" if ok else "CLEAR FAILED", GREEN if ok else RED,
-                    time.ticks_add(time.ticks_ms(), 3000))
+        code = clear_plate(pid_of(i))
+        ok = 200 <= code < 300
+        log("clear-plate", i, code)
+        msg = "BED CLEARED" if ok else "NO PERMISSION" if code in (401, 403) else "CLEAR FAILED"
+        flash[i] = (msg, GREEN if ok else RED, time.ticks_add(time.ticks_ms(), 4000))
         data[i] = fetch(pid_of(i)) or data[i]
     else:
         confirm[i] = time.ticks_add(now, CONFIRM_MS)
@@ -594,7 +607,7 @@ class App:
         return {"printers": printers, "device": {
             "screen_on": screen_on, "view": "main" if view == "main" else "printer %d" % (view + 1),
             "rssi": rssi, "ip": wl.ifconfig()[0], "uptime_s": time.ticks_diff(time.ticks_ms(), boot_ms) // 1000,
-            "free": gc.mem_free(), "idf_free": idf, "poll_s": S["poll"], "idle_min": S["idle"], "bambuddy": S["bambuddy"], "layout": S["layout"], "fetch_ms": fetch_ms,
+            "free": gc.mem_free(), "idf_free": idf, "poll_s": S["poll"], "idle_min": S["idle"], "bambuddy": S["bambuddy"], "layout": S["layout"], "fetch_ms": fetch_ms, "api_key": bool(HEADERS),
             "last_error": last_error}}
 
     def apply(self, form):

@@ -231,8 +231,12 @@ deploy `web.py`, reboot, then deploy the new module.
 
 ## 6. Bambuddy API used
 
-Base: `BAMBUDDY` in `config.py` (tested against Bambuddy v1.2.5.7). The display sends **no API key**:
-it expects Bambuddy auth to be disabled on the LAN (`GET /auth/status` → `auth_enabled: false`).
+Base: `BAMBUDDY` in `config.py` (tested against Bambuddy v1.2.5.7). **Auth:** if `config.API_KEY` is set, every
+request carries `X-API-Key: <key>` (`HEADERS` in app.py). Needed permissions: **Read Status** (status, queue) and
+**Control Printer** (clear-plate). With Bambuddy auth off (`GET /auth/status` → `auth_enabled: false`) keys are
+ignored, so a wrong key can't be detected there. 401/403 responses become a readable `last_error`
+(`AUTH_HINT`), and a refused clear shows *NO PERMISSION* on the bed strip. `/api/status` exposes only
+`api_key: true/false`, never the key.
 
 | Call | Used for | Notes |
 |---|---|---|

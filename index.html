@@ -55,7 +55,7 @@ async function load(){try{
   +'<div style="margin-top:6px;color:var('+(p.awaiting_clear?'--warn':'--ok')+')">'+(p.awaiting_clear?'Bed needs clearing':run?'Bed in use':'Bed ready')+'</div>'
   +'<div class=sw>'+p.trays.map(t=>'<span><b style="background:#'+esc(t.c)+'"></b>'+esc(t.t)+' '+t.r+'%</span>').join('')+'</div></div>'}).join('');
  const d=s.device;
- dev.innerHTML='Screen <b>'+(d.screen_on?'on':'off')+'</b> &middot; view '+esc(d.view)+' &middot; fetch '+(d.fetch_ms||0)+' ms &middot; WiFi '+d.rssi+' dBm &middot; IP '+esc(d.ip)
+ dev.innerHTML='Screen <b>'+(d.screen_on?'on':'off')+'</b> &middot; view '+esc(d.view)+' &middot; API key '+(d.api_key?'set':'not set')+' &middot; fetch '+(d.fetch_ms||0)+' ms &middot; WiFi '+d.rssi+' dBm &middot; IP '+esc(d.ip)
   +'<br>Up '+mins(Math.floor(d.uptime_s/60))+' &middot; free RAM '+Math.round(d.free/1024)+' KB (WiFi '+Math.round(d.idf_free/1024)+' KB) &middot; sleeps after '+d.idle_min+' min idle'+(d.last_error?'<br><span style="color:var(--bad)">'+esc(d.last_error)+'</span>':'');
  if(!filled){sf.poll.value=d.poll_s;sf.idle.value=d.idle_min;sf.bambuddy.value=d.bambuddy;sf.layout.value=d.layout||2;filled=true}
 }catch(e){dev.textContent='Display not responding'}}
