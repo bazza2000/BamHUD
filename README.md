@@ -251,9 +251,9 @@ Set `DEBUG = True` in `config.py` to log taps, redraws and timings.
 | Symptom | Cause / fix |
 |---|---|
 | esptool: *Wrong boot mode detected (0x13)* | Hold **BOOT** while esptool connects (see step 3). |
-| All colours inverted | Panel needs display inversion: `0x21` in `ili9341.py` init (already set). Remove it if your panel is the other kind. |
-| Red and blue swapped (e.g. caramel shows as blue) | MADCTL colour-order bit: `0x36` = `0x20` here; try `0x28` on other panels. |
-| Upside down | MADCTL `0x20` ↔ `0xE0`, then recalibrate touch. |
+| White background, dark text (colours inverted) | Display inversion: `_init()` sends `0x20` (inversion off). Some other CYD panels need `0x21` instead. |
+| Red and blue swapped (green looks lime, amber looks blue) | MADCTL colour-order bit: `0x36` = `0x28` (BGR) here; try `0x20` (RGB) on other panels. |
+| Upside down | MADCTL `0x28` ↔ `0xE8`, then recalibrate touch. |
 | Faint flicker | Wi-Fi power-save current spikes dip the backlight; the code sets `pm=PM_NONE` and lower TX power. Keep those. |
 | Taps land in the wrong place | Recalibrate (step 7). |
 | Screen frozen / web page times out / `ETIMEDOUT` | Wi-Fi memory exhausted. The display restarts itself if this persists (self-heal); check `idf_free` and see *Memory*. Make sure big modules are deployed as `.mpy`. |

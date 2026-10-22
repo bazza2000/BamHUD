@@ -124,11 +124,15 @@ deploy `web.py`, reboot, then deploy the new module.
 ## 5. Gotchas (the important part)
 
 ### 5.1 Display (`ili9341.py`)
-1. **Colour order: MADCTL `0x36` = `0x20`** (landscape, BGR bit **off**). Generic examples use
-   `0x28`/`0xE8` (BGR on) — on this panel that swaps red↔blue (caramel filament `#AE835B`
-   showed as steel blue). `0xE8` was the factory orientation; `0x20` is rotated 180° from it,
-   which suits how this unit is mounted (change it, and recalibrate touch, for the other way up).
-2. **Inversion ON (`0x21`) is required.** Without it every colour is inverted.
+1. **MADCTL `0x36` = `0x28`**: landscape, **BGR colour order** (bit 3 set), like the factory firmware's `0xE8`
+   but rotated 180° to suit how this unit is mounted (`0xE8` = the other way up; recalibrate touch if you flip it).
+2. **Display inversion OFF**: `_init()` sends `0x20` (INVOFF) **explicitly**. Don't add `0x21` (INVON).
+   History, so nobody repeats it: on day one a byte-order bug (gotcha 3) made colours look inverted, `0x21`
+   was added to "fix" it, and then red/blue were swapped (`0x20` MADCTL) to "fix" caramel showing as
+   blue-grey. The two mistakes partly cancelled on screen: navy came out white with dark text. Verified on
+   2026-10-22 with photos: INVOFF + `0x28` gives the mock's dark navy, an emerald DONE badge, amber temperatures,
+   caramel `#AE835B` and orange `#FF9016` spools. When checking colours, use a photo of the detail view (AMS
+   swatches) and compare it with `docs/screenshot_detail.png`.
 3. **Don't byte-swap RGB565.** `rgb()` returns the plain 16-bit value; everything is sent high byte first.
 4. **Backlight is a plain GPIO output, not PWM.** 1 kHz PWM visibly shimmered. `brightness()` is on/off.
 5. There is no framebuffer (320×240×2 = 150 KB won't fit). Everything draws straight to the panel.

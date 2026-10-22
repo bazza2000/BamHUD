@@ -42,12 +42,12 @@ class Display:
         self._cmd(0xC1, b"\x10")
         self._cmd(0xC5, b"\x3E\x28")
         self._cmd(0xC7, b"\x86")
-        self._cmd(0x36, b"\x20")        # landscape (flipped vs factory 0xE8), RGB order: BGR bit off
+        self._cmd(0x36, b"\x28")        # landscape (flipped vs factory 0xE8), BGR colour order like the factory firmware
         self._cmd(0x3A, b"\x55")        # 16-bit colour
         self._cmd(0xB1, b"\x00\x18")
         self._cmd(0xB6, b"\x08\x82\x27")
         self._cmd(0x26, b"\x01")
-        self._cmd(0x21)                 # display inversion on (this panel needs it)
+        self._cmd(0x20)                 # display inversion OFF, sent explicitly: never rely on the power-on state
         self._cmd(0x11)
         time.sleep_ms(120)
         self._cmd(0x29)
