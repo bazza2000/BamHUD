@@ -1,0 +1,5 @@
+# PC-side tools (flashing, deploying, fonts, simulator). Not needed on the board.
+esptool>=4.7
+pyserial>=3.5
+mpy-cross==1.29.*   # must match the MicroPython version on the board (.mpy v6.3)
+pillow>=10

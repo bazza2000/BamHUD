@@ -1,0 +1,16 @@
+# Secrets and site-specific notes — never commit
+config.py
+CLAUDE.local.md
+settings.json
+
+# Generated
+build/
+sim/
+__pycache__/
+*.pyc
+*.new
+
+# OS / Google Drive metadata
+desktop.ini
+Thumbs.db
+.DS_Store

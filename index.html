@@ -1,0 +1,62 @@
+<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>BamHUD</title>
+<style>
+:root{--bg:#0a0c12;--card:#181c28;--fg:#f0f0f5;--mute:#8287a0;--ok:#3cc86e;--run:#4696ff;--warn:#ffb428;--bad:#f04646;--track:#323746}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif;padding:16px;max-width:760px;margin:auto}
+h1{font-size:20px;margin:0 0 12px}h2{font-size:14px;color:var(--mute);text-transform:uppercase;letter-spacing:.06em;margin:20px 0 8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.card{background:var(--card);border-radius:10px;padding:14px}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;color:#0a0c12;font-weight:600;font-size:12px}
+.bar{height:8px;background:var(--track);border-radius:4px;overflow:hidden;margin:8px 0}.bar i{display:block;height:100%}
+.pct{font-size:32px;font-weight:700}.mute{color:var(--mute)}.row{display:flex;justify-content:space-between;gap:8px}
+.sw{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}.sw span{display:flex;align-items:center;gap:4px;font-size:12px;background:var(--bg);padding:3px 6px;border-radius:4px}
+.sw b{width:12px;height:12px;border-radius:2px;display:inline-block;border:1px solid var(--track)}
+form{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center}
+input{background:var(--bg);color:var(--fg);border:1px solid var(--track);border-radius:6px;padding:8px;font:inherit;width:100%}
+button{background:var(--run);color:#fff;border:0;border-radius:6px;padding:9px 14px;font:inherit;cursor:pointer}
+button.alt{background:var(--track)}.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}#msg{min-height:1.4em;color:var(--warn)}
+</style></head><body>
+<h1>BamHUD</h1>
+<div class=grid id=printers></div>
+<h2>Device</h2><div class="card" id=dev>loading...</div>
+<h2>Settings</h2><div class=card>
+<form id=sf>
+<label>Poll seconds</label><input name=poll type=number min=2 max=120>
+<label>Sleep after (min)</label><input name=idle type=number min=1 max=600>
+<label>Bambuddy URL</label><input name=bambuddy>
+<label>Password</label><input name=pw type=password autocomplete=current-password>
+</form>
+<div class=btns><button onclick="post('/api/settings',new FormData(sf))">Save settings</button>
+<button class=alt onclick="scr(1)">Screen on</button><button class=alt onclick="scr(0)">Screen off</button>
+<button class=alt onclick="if(confirm('Reboot the display?'))post('/api/reboot',pwOnly())">Reboot</button></div>
+<p id=msg></p></div>
+<script>
+const C={RUNNING:['PRINTING','--run'],PREPARE:['PREPARING','--run'],PAUSE:['PAUSED','--warn'],FINISH:['DONE','--ok'],IDLE:['IDLE','--ok'],FAILED:['FAILED','--bad']};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const mins=m=>{m=+m||0;return m>=60?Math.floor(m/60)+'h'+String(m%60).padStart(2,'0')+'m':m+'m'};
+let filled=false;
+function pwOnly(){const f=new FormData();f.append('pw',sf.pw.value);return f}
+function scr(on){const f=pwOnly();f.append('on',on);post('/api/screen',f)}
+async function post(u,fd){msg.textContent='...';
+ try{const r=await fetch(u,{method:'POST',body:new URLSearchParams(fd)});msg.textContent=r.ok?'Done':'Error: '+await r.text();load()}
+ catch(e){msg.textContent='Error: '+e}}
+async function load(){try{
+ const s=await (await fetch('/api/status')).json();
+ printers.innerHTML=s.printers.map(p=>{if(!p.ok)return '<div class=card><b>'+esc(p.name)+'</b><p class=mute>No data</p></div>';
+  let [l,v]=C[p.state]||[p.state,'--mute'];if(p.hms)[l,v]=['ERROR','--bad'];
+  const run=['RUNNING','PAUSE','PREPARE'].includes(p.state);
+  return '<div class=card><div class=row><b>'+esc(p.name)+'</b><span class=badge style="background:var('+v+')">'+l+'</span></div>'
+  +'<div class=pct>'+p.progress+'%</div><div class=bar><i style="width:'+p.progress+'%;background:var('+v+')"></i></div>'
+  +'<div class=mute>'+esc(p.file||'-')+'</div>'
+  +'<div class=row><span>Left '+(run?mins(p.remaining):'-')+'</span><span>Layer '+(run?p.layer+'/'+p.layers:'-')+'</span></div>'
+  +'<div class=row><span>Nozzle '+p.nozzle+'C</span><span>Bed '+p.bed+'C</span></div>'
+  +'<div style="margin-top:6px;color:var('+(p.awaiting_clear?'--warn':'--ok')+')">'+(p.awaiting_clear?'Bed needs clearing':run?'Bed in use':'Bed ready')+'</div>'
+  +'<div class=sw>'+p.trays.map(t=>'<span><b style="background:#'+esc(t.c)+'"></b>'+esc(t.t)+' '+t.r+'%</span>').join('')+'</div></div>'}).join('');
+ const d=s.device;
+ dev.innerHTML='Screen <b>'+(d.screen_on?'on':'off')+'</b> &middot; view '+esc(d.view)+' &middot; WiFi '+d.rssi+' dBm &middot; IP '+esc(d.ip)
+  +'<br>Up '+mins(Math.floor(d.uptime_s/60))+' &middot; free RAM '+Math.round(d.free/1024)+' KB (WiFi '+Math.round(d.idf_free/1024)+' KB) &middot; sleeps after '+d.idle_min+' min idle'+(d.last_error?'<br><span style="color:var(--bad)">'+esc(d.last_error)+'</span>':'');
+ if(!filled){sf.poll.value=d.poll_s;sf.idle.value=d.idle_min;sf.bambuddy.value=d.bambuddy;filled=true}
+}catch(e){dev.textContent='Display not responding'}}
+load();setInterval(load,5000);
+</script></body></html>
